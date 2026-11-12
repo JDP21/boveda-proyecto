@@ -1,0 +1,9 @@
+[submodule "boveda-servidor"]
+	path = boveda-servidor
+	url = https://github.com/JDP21/boveda-servidor.git
+[submodule "boveda-cliente"]
+	path = boveda-cliente
+	url = https://github.com/JDP21/boveda-cliente.git
+[submodule "boveda-infra"]
+	path = boveda-infra
+	url = https://github.com/JDP21/boveda-infra.git
