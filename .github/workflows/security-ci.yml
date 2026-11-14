@@ -38,15 +38,19 @@ jobs:
   client:
     name: Cliente (lint + build)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('client/package.json') != '' }}
     defaults:
       run:
         working-directory: client
     steps:
       - uses: actions/checkout@v4
+      # Se omite hasta que exista el proyecto Vite (client/package.json)
       - uses: actions/setup-node@v4
+        if: hashFiles('client/package.json') != ''
         with:
           node-version: "20"
-      - run: npm ci
-      - run: npm run lint --if-present
-      - run: npm run build
+      - if: hashFiles('client/package.json') != ''
+        run: npm ci
+      - if: hashFiles('client/package.json') != ''
+        run: npm run lint --if-present
+      - if: hashFiles('client/package.json') != ''
+        run: npm run build
