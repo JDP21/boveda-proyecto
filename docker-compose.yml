@@ -1,0 +1,25 @@
+# Orquesta vault-api-server + vault-web-client con volúmenes locales en ./data
+#   cp .env.example .env
+#   docker compose up --build        -> http://localhost:8080
+#   docker compose up --build server -> solo la API (http://localhost:8000/docs)
+name: boveda
+
+services:
+  server:                                  # vault-api-server (FastAPI)
+    build: ./server
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/db/database.db
+      BLOB_DIR: /data/objects
+    volumes:
+      - ./data/db:/data/db                 # vault-db
+      - ./data/objects:/data/objects       # vault-object-storage (*.enc)
+    ports:
+      - "8000:8000"                        # acceso directo a la API (Swagger) en desarrollo
+
+  client:                                  # vault-web-client (React + TS + Vite, servido por nginx)
+    build: ./client
+    ports:
+      - "8080:80"
+    depends_on:
+      - server

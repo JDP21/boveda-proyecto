@@ -1,0 +1,29 @@
+# Secretos: NUNCA al repositorio
+.env
+*.pem
+*.key
+
+# Volúmenes locales (base de datos y archivos cifrados)
+data/**
+!data/db/
+!data/objects/
+!data/**/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Vite
+node_modules/
+client/dist/
+
+# Evidencias pesadas de ataques
+attacks/evidencias/*.pcap
+
+# Sistema
+.DS_Store
+Thumbs.db
