@@ -36,16 +36,23 @@ def head(_: User = Depends(current_user), db: DBSession = Depends(get_db)):
     return {"seq": last.seq if last else 0, "hash": last.entry_hash if last else GENESIS}
 
 
-@router.post("")
-def append(body: AuditIn, user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+def append_entry(db: DBSession, user: User, body: AuditIn) -> AuditEntry:
+    """Valida que la entrada encadene con la cabeza actual y la agrega (sin hacer commit)."""
     last = db.scalar(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1))
     tip = last.entry_hash if last else GENESIS
     if body.prev_hash != tip:
         raise HTTPException(409, "prev_hash no coincide con la cabeza del log; vuelve a pedir /audit/head")
     if chain_hash(body.prev_hash, body.event) != body.entry_hash:
         raise HTTPException(400, "entry_hash incorrecto")
-    db.add(AuditEntry(actor_id=user.id, event=body.event, prev_hash=body.prev_hash,
-                      entry_hash=body.entry_hash, signature=body.signature))
+    entry = AuditEntry(actor_id=user.id, event=body.event, prev_hash=body.prev_hash,
+                       entry_hash=body.entry_hash, signature=body.signature)
+    db.add(entry)
+    return entry
+
+
+@router.post("")
+def append(body: AuditIn, user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+    append_entry(db, user, body)
     db.commit()
     return {"ok": True}
 

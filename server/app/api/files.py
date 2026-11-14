@@ -9,7 +9,7 @@ import json
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, UploadFile
 from fastapi import File as FileParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session as DBSession
 from ..config import BLOB_DIR, MAX_FILE_BYTES
 from ..models import File, FileKey, User, get_db
 from ..security import current_user
+from .audit import AuditIn, append_entry
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -128,11 +129,18 @@ async def new_version(file_id: str, version: int = Form(...),
 
 @router.get("")
 def list_files(user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+    """HU-10 / TK-10.1 — Manifiestos de los archivos a los que el usuario tiene acceso
+    (propios y compartidos con él). El cliente muestra id, versión y metadatos del manifiesto
+    y puede verificar `manifest_signature` con la clave pública del propietario."""
     rows = db.execute(select(File, User.username).join(FileKey, FileKey.file_id == File.id)
                       .join(User, User.id == File.owner_id)
-                      .where(FileKey.user_id == user.id)).all()
-    return [{"id": f.id, "owner": owner, "version": f.version, "size": f.size,
-             "manifest": f.manifest, "updated_at": f.updated_at.isoformat()} for f, owner in rows]
+                      .where(FileKey.user_id == user.id)
+                      .order_by(File.updated_at.desc())).all()
+    return [{"id": f.id, "owner": owner, "is_owner": f.owner_id == user.id,
+             "version": f.version, "size": f.size,
+             "manifest": f.manifest, "manifest_signature": f.manifest_signature,
+             "created_at": f.created_at.isoformat(), "updated_at": f.updated_at.isoformat()}
+            for f, owner in rows]
 
 
 @router.get("/{file_id}/meta")
@@ -151,14 +159,32 @@ def file_blob(file_id: str, user: User = Depends(current_user), db: DBSession = 
 
 
 @router.delete("/{file_id}")
-def delete_file(file_id: str, user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+def delete_file(file_id: str, audit: AuditIn | None = Body(default=None),
+                user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+    """HU-10 / TK-10.2 — Elimina el archivo (solo el propietario): borra el ciphertext del
+    volumen vault-object-storage, todas las DEK envueltas y el registro del archivo.
+
+    Cuerpo opcional: la entrada de auditoría FIRMADA por el cliente para el evento
+    {"action":"delete","file":"<id>",...}. Si se envía, se guarda en la misma transacción,
+    de modo que el borrado y su registro en el log ocurren juntos o no ocurren.
+    """
     f = _owned(db, file_id, user)
+    if audit is not None:
+        try:
+            ev = json.loads(audit.event)
+        except ValueError:
+            raise HTTPException(400, "El evento de auditoría no es JSON válido")
+        if ev.get("action") != "delete" or ev.get("file") != file_id:
+            raise HTTPException(400, 'El evento de auditoría debe ser {"action":"delete","file":"<id>"}')
+        append_entry(db, user, audit)
+    blob_path = f.blob_path
     db.query(FileKey).filter(FileKey.file_id == file_id).delete()
-    if os.path.exists(f.blob_path):
-        os.remove(f.blob_path)
     db.delete(f)
     db.commit()
-    return {"ok": True}
+    # El archivo físico se borra después del commit: si la BD falla, no se pierde el ciphertext
+    if os.path.exists(blob_path):
+        os.remove(blob_path)
+    return {"ok": True, "id": file_id, "audited": audit is not None}
 
 
 # ---------------------------------------------------------------- Compartir / revocar

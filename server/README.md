@@ -45,10 +45,10 @@ Pruebas y estilo: `pytest -q` y `ruff check app tests`
 | POST | `/files/new-id` | Id para incluir en el manifiesto y en los datos asociados de GCM |
 | POST | `/files` | Sube el archivo cifrado, la DEK envuelta y el manifiesto firmado |
 | PUT | `/files/{id}` | Nueva versión o re-cifrado tras revocar (exige versión mayor: anti-rollback) |
-| GET | `/files` | Lista los archivos a los que tienes acceso |
+| GET | `/files` | **HU-10.** Manifiestos de tus archivos y de los compartidos contigo: `id`, `owner`, `is_owner`, `version`, `size`, `manifest`, `manifest_signature` y fechas |
 | GET | `/files/{id}/meta` | Manifiesto, firma y tu DEK envuelta |
 | GET | `/files/{id}/blob` | Archivo cifrado |
-| DELETE | `/files/{id}` | Eliminar (solo el propietario) |
+| DELETE | `/files/{id}` | **HU-10.** Elimina (solo el propietario): borra el `.enc`, las DEK envueltas y el registro. Cuerpo opcional: entrada de auditoría firmada `{"action":"delete","file":id}`, que se guarda en la misma transacción |
 | GET | `/files/{id}/access` | Quién tiene acceso |
 | POST | `/files/{id}/share` | Compartir (DEK envuelta para el destinatario) |
 | DELETE | `/files/{id}/share/{usuario}` | Revocar (luego hay que re-cifrar con DEK nueva) |
@@ -67,3 +67,22 @@ Autenticación: encabezado `Authorization: Bearer <token>`, con un token opaco d
 
 ## Secretos
 El archivo `.env` (en la raíz del repositorio) está en `.gitignore`, y Gitleaks lo verifica en cada push. Nunca subas claves, contraseñas ni tokens: si aparecen en el historial de Git, el criterio C8 queda en insuficiente.
+
+## Uso desde el front (HU-10)
+Todas las rutas llevan el prefijo `/api` cuando se llaman desde el navegador.
+
+```ts
+// Listar (TK-10.1)
+const files = await fetch("/api/files", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json());
+// files[i].manifest es un JSON en texto: JSON.parse(files[i].manifest) -> { id, version, name, size, sha256 }
+
+// Eliminar con evento de auditoría firmado (TK-10.2)
+const { hash } = await fetch("/api/audit/head", { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json());
+const entry = await auditEntry(hash, { action: "delete", file: id, ts: new Date().toISOString() }, sigPrivateKey);
+await fetch(`/api/files/${id}`, {
+  method: "DELETE",
+  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  body: JSON.stringify(entry),   // { event, prev_hash, entry_hash, signature }; también se puede omitir
+});
+```
+`auditEntry` calcula `entry_hash = SHA-256(prev_hash ‖ event)` sobre el JSON canónico del evento y firma `entry_hash` con ECDSA P-256.

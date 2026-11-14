@@ -116,3 +116,50 @@ def test_audit_chain():
     assert client.post("/audit", headers=a, json={"event": ev, "prev_hash": head,
                                                   "entry_hash": h, "signature": "SIG"}).status_code == 409
     assert client.get("/audit/verify-chain", headers=a).json() == {"ok": True}
+
+
+# ---------------------------------------------------------------- HU-10: listar y eliminar
+def _upload(headers: dict, name: str = "doc.txt") -> str:
+    fid = client.post("/files/new-id", headers=headers).json()["id"]
+    manifest = json.dumps({"id": fid, "version": 1, "name": name, "sha256": "ab"})
+    r = client.post("/files", headers=headers, data={"file_id": fid, "version": 1, "wrapped_dek": "DEK",
+                                                     "manifest": manifest, "manifest_signature": "SIG"},
+                    files={"blob": ("x.enc", b"\x01cifrado")})
+    assert r.status_code == 200, r.text
+    return fid
+
+
+def test_hu10_listar_manifiestos():
+    h, otro = make_user("dora"), make_user("eve")
+    fid = _upload(h, "informe.pdf")
+    lista = client.get("/files", headers=h).json()
+    item = next(x for x in lista if x["id"] == fid)
+    assert item["is_owner"] and item["version"] == 1 and item["manifest_signature"] == "SIG"
+    assert json.loads(item["manifest"])["name"] == "informe.pdf"
+    assert all(x["id"] != fid for x in client.get("/files", headers=otro).json())  # aislamiento
+
+
+def test_hu10_eliminar_purga_y_audita():
+    h, otro = make_user("frank"), make_user("gina")
+    fid = _upload(h)
+    blob = os.path.join(os.environ["BLOB_DIR"], f"{fid}.v1.enc")
+    assert os.path.exists(blob)
+    assert client.delete(f"/files/{fid}", headers=otro).status_code == 404       # solo el propietario
+
+    head = client.get("/audit/head", headers=h).json()["hash"]
+    malo = '{"action":"upload","file":"%s"}' % fid
+    r = client.request("DELETE", f"/files/{fid}", headers=h, json={
+        "event": malo, "prev_hash": head, "entry_hash": chain_hash(head, malo), "signature": "S"})
+    assert r.status_code == 400 and os.path.exists(blob)                         # evento incorrecto: no borra
+
+    ev = '{"action":"delete","file":"%s"}' % fid
+    r = client.request("DELETE", f"/files/{fid}", headers=h, json={
+        "event": ev, "prev_hash": head, "entry_hash": chain_hash(head, ev), "signature": "S"})
+    assert r.status_code == 200 and r.json()["audited"] is True
+    assert not os.path.exists(blob)                                              # ciphertext purgado
+    assert client.get(f"/files/{fid}/meta", headers=h).status_code == 404       # DEK envueltas fuera
+    assert client.get("/audit", headers=h).json()[-1]["event"] == ev            # evento en el log
+    assert client.get("/audit/verify-chain", headers=h).json() == {"ok": True}
+
+    fid2 = _upload(h)                                                            # sin cuerpo también funciona
+    assert client.delete(f"/files/{fid2}", headers=h).json()["audited"] is False
