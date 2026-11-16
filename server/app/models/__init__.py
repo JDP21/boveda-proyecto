@@ -120,6 +120,7 @@ class AuditEntry(Base):
     prev_hash: Mapped[str] = mapped_column(String(64))
     entry_hash: Mapped[str] = mapped_column(String(64))
     signature: Mapped[str] = mapped_column(Text)       # firma ECDSA del actor sobre entry_hash
+    signer_key: Mapped[str] = mapped_column(Text)      # clave pública de firma del actor en ese momento
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

@@ -30,9 +30,9 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from ..config import CHALLENGE_TTL_SECONDS, ORIGIN, RP_ID, RP_NAME
-from ..models import Challenge, Credential, User, get_db, utcnow
-from ..security import new_session
+from ..config import CHALLENGE_TTL_SECONDS, ORIGINS, RP_ID, RP_NAME
+from ..models import Challenge, Credential, Session, User, UserKeys, get_db, utcnow
+from ..security import bearer_token, current_user, new_session, purge_expired
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -79,6 +79,7 @@ def _consume_challenge(db: DBSession, username: str, credential: dict, purpose: 
 # ---------------------------------------------------------------- Registro
 @router.post("/register/options")
 def register_options(body: UsernameIn, db: DBSession = Depends(get_db)):
+    purge_expired(db)
     username = _check_username(body.username)
     if db.scalar(select(User).where(User.username == username)):
         raise HTTPException(409, "El usuario ya existe")
@@ -107,7 +108,7 @@ def register_verify(body: VerifyIn, db: DBSession = Depends(get_db)):
     try:
         verified = verify_registration_response(
             credential=body.credential, expected_challenge=challenge,
-            expected_rp_id=RP_ID, expected_origin=ORIGIN)
+            expected_rp_id=RP_ID, expected_origin=ORIGINS)
     except Exception as e:
         raise HTTPException(400, f"Registro WebAuthn rechazado: {e}")
 
@@ -124,6 +125,7 @@ def register_verify(body: VerifyIn, db: DBSession = Depends(get_db)):
 # ---------------------------------------------------------------- Login
 @router.post("/login/options")
 def login_options(body: UsernameIn, db: DBSession = Depends(get_db)):
+    purge_expired(db)
     username = _check_username(body.username)
     user = db.scalar(select(User).where(User.username == username))
     if not user:
@@ -156,7 +158,7 @@ def login_verify(body: VerifyIn, db: DBSession = Depends(get_db)):
     try:
         verified = verify_authentication_response(
             credential=body.credential, expected_challenge=challenge,
-            expected_rp_id=RP_ID, expected_origin=ORIGIN,
+            expected_rp_id=RP_ID, expected_origin=ORIGINS,
             credential_public_key=cred.public_key,
             credential_current_sign_count=cred.sign_count)
     except Exception as e:
@@ -164,3 +166,22 @@ def login_verify(body: VerifyIn, db: DBSession = Depends(get_db)):
     cred.sign_count = verified.new_sign_count
     db.commit()
     return {"ok": True, "username": username, "token": new_session(db, user)}
+
+
+# ---------------------------------------------------------------- Sesión
+@router.get("/me")
+def me(user: User = Depends(current_user), db: DBSession = Depends(get_db)):
+    """Datos de la sesión actual. `has_keys` indica si el cliente debe generar o desbloquear claves."""
+    return {"username": user.username, "has_keys": db.get(UserKeys, user.id) is not None,
+            "created_at": user.created_at.isoformat()}
+
+
+@router.post("/logout")
+def logout(token: str = Depends(bearer_token), _: User = Depends(current_user),
+           db: DBSession = Depends(get_db)):
+    """Invalida el token de sesión en el servidor."""
+    sess = db.get(Session, token)
+    if sess:
+        db.delete(sess)
+        db.commit()
+    return {"ok": True}
