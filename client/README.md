@@ -10,7 +10,7 @@ npm install
 npm install @simplewebauthn/browser
 ```
 
-Para desarrollar con recarga en caliente, reenvía `/api` al servidor en `vite.config.ts` y pon `ORIGIN=http://localhost:5173` en el `.env` de la raíz:
+Para desarrollar con recarga en caliente, reenvía `/api` al servidor en `vite.config.ts` (el `.env.example` ya acepta el origen `http://localhost:5173`):
 ```ts
 export default defineConfig({
   plugins: [react()],
@@ -29,7 +29,7 @@ npm run dev    # http://localhost:5173  (con la API corriendo: docker compose up
 | `src/components/` | Interfaz |
 
 ## Contrato de la API
-Lo define el servidor: ver `server/README.md` o http://localhost:8000/docs. Todas las rutas se llaman con el prefijo `/api` (por ejemplo `/api/auth/login/options`) y el encabezado `Authorization: Bearer <token>`.
+Lo define el servidor: ver la sección **Contrato para el front** de `server/README.md` (formatos exactos de claves, firmas, manifiesto y log) o http://localhost:8000/docs. `server/scripts/sim_client.py` es un cliente de referencia en Python que hace lo mismo que debe hacer el navegador. Todas las rutas se llaman con el prefijo `/api` (por ejemplo `/api/auth/login/options`) y el encabezado `Authorization: Bearer <token>`.
 
 ## Primitivas (documento de diseño, sección 4.1)
 | Uso | Primitiva | Parámetros |

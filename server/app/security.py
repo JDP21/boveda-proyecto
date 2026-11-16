@@ -1,21 +1,13 @@
-"""Sesiones y utilidades de seguridad del servidor."""
-import base64
+"""Sesiones del servidor (token opaco aleatorio de 256 bits)."""
 import secrets
 from datetime import timedelta
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import delete
 from sqlalchemy.orm import Session as DBSession
 
 from .config import SESSION_TTL_MINUTES
-from .models import Session, User, get_db, utcnow
-
-
-def b64e(data: bytes) -> str:
-    return base64.b64encode(data).decode()
-
-
-def b64d(data: str) -> bytes:
-    return base64.b64decode(data)
+from .models import Challenge, Session, User, get_db, utcnow
 
 
 def new_session(db: DBSession, user: User) -> str:
@@ -26,11 +18,21 @@ def new_session(db: DBSession, user: User) -> str:
     return token
 
 
-def current_user(authorization: str = Header(default=""),
-                 db: DBSession = Depends(get_db)) -> User:
+def purge_expired(db: DBSession) -> None:
+    """Elimina retos y sesiones vencidos (se llama en cada inicio de registro/login)."""
+    now = utcnow()
+    db.execute(delete(Challenge).where(Challenge.expires_at < now))
+    db.execute(delete(Session).where(Session.expires_at < now))
+    db.commit()
+
+
+def bearer_token(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Falta token de sesión")
-    token = authorization.removeprefix("Bearer ").strip()
+    return authorization.removeprefix("Bearer ").strip()
+
+
+def current_user(token: str = Depends(bearer_token), db: DBSession = Depends(get_db)) -> User:
     sess = db.get(Session, token)
     if not sess or sess.expires_at < utcnow():
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
