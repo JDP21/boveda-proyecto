@@ -1,43 +1,43 @@
 # client — vault-web-client (React + TypeScript + Vite)
 
-**Responsable: Persona 3.** Todo el cifrado ocurre aquí; el servidor solo recibe material público o cifrado.
+**Responsable: Cesar Soriano (Persona 3).** Todo el cifrado ocurre aquí; el servidor solo recibe material público o cifrado.
 
-## Crear el proyecto
-Desde esta carpeta (los archivos `Dockerfile`, `nginx.conf` y `src/` ya existen; no los borres):
+## Desarrollo local
+Con la API arriba (`docker compose up --build server` o `uvicorn` en `server/`):
 ```bash
-npm create vite@latest . -- --template react-ts
+cd client
 npm install
-npm install @simplewebauthn/browser
+npm run dev    # http://localhost:5173  (proxy /api → :8000)
 ```
 
-Para desarrollar con recarga en caliente, reenvía `/api` al servidor en `vite.config.ts` (el `.env.example` ya acepta el origen `http://localhost:5173`):
-```ts
-export default defineConfig({
-  plugins: [react()],
-  server: { proxy: { "/api": { target: "http://localhost:8000", rewrite: (p) => p.replace(/^\/api/, "") } } },
-});
-```
+Abre siempre con **`localhost`**, nunca `127.0.0.1` (WebAuthn liga la passkey al origen).
+
+Producción / Docker (nginx sirve el build y reenvía `/api`):
 ```bash
-npm run dev    # http://localhost:5173  (con la API corriendo: docker compose up server)
+docker compose up --build
+# http://localhost:8080
 ```
 
 ## Estructura
-| Carpeta | Contenido |
+| Ruta | Contenido |
 |---|---|
-| `src/crypto/` | Web Crypto API: AES-256-GCM, RSA-OAEP 3072, ECDSA P-256, SHA-256; Argon2id para la KEK |
-| `src/auth/` | Registro e inicio de sesión con passkeys (`@simplewebauthn/browser`) |
-| `src/components/` | Interfaz |
+| `src/api.ts` | Cliente HTTP + token Bearer |
+| `src/auth/` | Passkeys (`@simplewebauthn/browser`) — TK-03.2 |
+| `src/crypto/` | Web Crypto + Argon2id (`hash-wasm`): encoding, firmas, claves, sobre |
+| `src/files/` | Manifiesto firmado, subida, listado/borrado, descarga, compartir |
+| `src/components/` | UI: auth, desbloqueo de claves, tabla de archivos |
 
 ## Contrato de la API
-Lo define el servidor: ver la sección **Contrato para el front** de `server/README.md` (formatos exactos de claves, firmas, manifiesto y log) o http://localhost:8000/docs. `server/scripts/sim_client.py` es un cliente de referencia en Python que hace lo mismo que debe hacer el navegador. Todas las rutas se llaman con el prefijo `/api` (por ejemplo `/api/auth/login/options`) y el encabezado `Authorization: Bearer <token>`.
+Ver la sección **Contrato para el front** de `server/README.md` o http://localhost:8000/docs.
+Referencia de formatos: `server/scripts/sim_client.py`.
 
-## Primitivas (documento de diseño, sección 4.1)
+## Primitivas (documento de diseño)
 | Uso | Primitiva | Parámetros |
 |---|---|---|
-| Archivos | AES-256-GCM | DEK aleatoria por archivo y versión, IV de 96 bits, AD = `id\|versión` |
-| Envoltura de la DEK | RSA-OAEP | 3072 bits, SHA-256 |
-| Firmas | ECDSA P-256 | SHA-256 (manifiestos y log) |
-| Claves privadas | Argon2id → AES-256-GCM | m = 64 MiB, t = 3, p = 1, sal de 16 B |
-| Huellas | SHA-256 | SHA-256(SPKI de cifrado ‖ SPKI de firma) |
+| Archivos | AES-256-GCM | DEK por archivo/versión, IV 96 bits, AD = `id\|versión` |
+| Envoltura DEK | RSA-OAEP | 3072 bits, SHA-256 |
+| Firmas | ECDSA P-256 | SHA-256 (manifiestos) |
+| Claves privadas | Argon2id → AES-256-GCM | m = 64 MiB, t = 3, p = 1, sal 16 B |
+| Huellas | SHA-256 | SHA-256(SPKI cifrado ‖ SPKI firma) |
 
-Al descargar se verifica, en este orden: la huella del propietario, la firma del manifiesto, la versión (anti-rollback), el SHA-256 del blob y la etiqueta GCM.
+Al descargar: firma del manifiesto → versión (anti-rollback) → SHA-256 del blob → unwrap DEK → AES-GCM.

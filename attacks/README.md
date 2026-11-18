@@ -9,7 +9,18 @@
 | `03_tamper_ciphertext.py` | Cambiar un byte de un `*.enc` | SHA-256 del manifiesto firmado y etiqueta GCM |
 | `04_rollback_version.py` | Volver a servir una versión antigua del archivo (tabla `files`) | Versión en el manifiesto firmado y última versión vista |
 
-Opcionales: replay de una respuesta WebAuthn (el reto es de un solo uso) y alteración de `audit_log` (se rompe la cadena de hashes).
+| `05_replay_webauthn.py` | Reenvío de una respuesta WebAuthn capturada | Reto de un solo uso |
+
+Opcional: alteración de `audit_log` (se rompe la cadena de hashes).
+
+## Uso rápido (TK-08.1)
+Desde la raíz del repo, con el sistema arriba y un archivo ya subido:
+```bash
+python attacks/01_db_dump.py "TEXTO-SECRETO-DEL-ARCHIVO"
+python attacks/03_tamper_ciphertext.py <file_id>   # luego descarga en el navegador
+python attacks/05_replay_webauthn.py               # requiere deps de server/
+```
+Guarda capturas del front rechazando el ataque en `attacks/evidencias/`.
 
 ## Datos útiles
 - Base de datos SQLite: `data/db/database.db`. Se puede abrir con Python (`sqlite3`) o con DB Browser for SQLite.
