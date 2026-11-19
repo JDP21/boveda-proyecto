@@ -3,6 +3,7 @@ import { fromB64, toB64 } from "../crypto/encoding";
 import type { Keys } from "../crypto/keys";
 import { fingerprint } from "../crypto/sign";
 import { fetchFilePackage } from "./api";
+import { buildAuditEntry } from "../auth/api";
 
 type PublicKeys = {
   username?: string;
@@ -33,7 +34,7 @@ export async function trustedKeys(user: string): Promise<PublicKeys> {
   return pk;
 }
 
-export async function shareFile(keys: Keys, _username: string, id: string, to: string) {
+export async function shareFile(keys: Keys, username: string, id: string, to: string) {
   const pk = await trustedKeys(to);
   const { meta } = await fetchFilePackage(id);
   const rawDek = await crypto.subtle.decrypt(
@@ -48,8 +49,15 @@ export async function shareFile(keys: Keys, _username: string, id: string, to: s
     false,
     ["encrypt"],
   );
+  const audit = await buildAuditEntry(keys, {
+    action: "share",
+    actor: username,
+    file: id,
+    to,
+  });
   return api("POST", `/files/${id}/share`, {
     username: to,
     wrapped_dek: toB64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, toPub, rawDek)),
+    audit,
   });
 }

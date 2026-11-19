@@ -1,6 +1,7 @@
 import { api } from "../api";
 import type { FilePackage } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
+import { buildAuditEntry } from "../auth/api";
 
 export type FileItem = {
   id: string;
@@ -21,7 +22,11 @@ export async function fetchFilePackage(id: string): Promise<FilePackage> {
   return { meta, blob };
 }
 
-export async function deleteFile(_keys: Keys, _username: string, id: string) {
-  // audit es opcional; se puede enlazar después con Daniel (HU-07)
-  return api("DELETE", `/files/${id}`);
+export async function deleteFile(keys: Keys, username: string, id: string) {
+  const audit = await buildAuditEntry(keys, {
+    action: "delete",
+    actor: username,
+    file: id,
+  });
+  return api("DELETE", `/files/${id}`, audit);
 }

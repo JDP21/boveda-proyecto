@@ -1,9 +1,10 @@
 import { api } from "../api";
+import { buildAuditEntry } from "../auth/api";
 import { encryptFile, wrapDek } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
 import { signedManifest } from "./manifest";
 
-export async function uploadFile(keys: Keys, _username: string, file: File) {
+export async function uploadFile(keys: Keys, username: string, file: File) {
   const { id } = await api<{ id: string }>("POST", "/files/new-id");
   const version = 1;
   const data = new Uint8Array(await file.arrayBuffer());
@@ -18,6 +19,12 @@ export async function uploadFile(keys: Keys, _username: string, file: File) {
     blob,
   );
   const wrapped_dek = await wrapDek(rawDek, keys.encPublic);
+  const audit = await buildAuditEntry(keys, {
+    action: "upload",
+    actor: username,
+    file: id,
+    version,
+  });
 
   const form = new FormData();
   form.append("file_id", id);
@@ -25,6 +32,7 @@ export async function uploadFile(keys: Keys, _username: string, file: File) {
   form.append("wrapped_dek", wrapped_dek);
   form.append("manifest", manifest);
   form.append("manifest_signature", manifest_signature);
+  form.append("audit", JSON.stringify(audit));
   form.append("blob", new Blob([blob]), "blob.enc");
   return api("POST", "/files", form);
 }
