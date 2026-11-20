@@ -61,7 +61,8 @@ describe("file API", () => {
     const result = await fetchFilePackage("file-1");
 
     expect(result.meta).toEqual(meta);
-    expect([...result.blob]).toEqual([...bytes]);
+    const blob = result.blob instanceof Uint8Array ? result.blob : new Uint8Array(result.blob);
+    expect([...blob]).toEqual([...bytes]);
     expect(fetchMock).toHaveBeenCalledWith("/api/files/file-1/blob", {
       headers: { Authorization: "Bearer session-token" },
     });

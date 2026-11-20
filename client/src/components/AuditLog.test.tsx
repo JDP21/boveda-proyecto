@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAuditLog, verifyFullAuditChain, type AuditRecord } from "../auth/api";
+import { fetchAuditLog, verifyFullAuditChain, type AuditRecord } from "../audit/api";
 import { AuditLog } from "./AuditLog";
 
-vi.mock("../auth/api", () => ({
+vi.mock("../audit/api", () => ({
   fetchAuditLog: vi.fn(),
   verifyFullAuditChain: vi.fn(),
 }));

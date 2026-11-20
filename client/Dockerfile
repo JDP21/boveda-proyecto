@@ -1,9 +1,9 @@
-# vault-web-client: compila con Vite y sirve el resultado con nginx.
-# Requiere que exista el proyecto Vite (package.json) — ver client/README.md
-FROM node:20-alpine AS build
+FROM node:20-slim AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+
+COPY package.json ./
+RUN npm install
+
 COPY . .
 RUN npm run build
 

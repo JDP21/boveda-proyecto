@@ -366,7 +366,12 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
                   </button>
                   {f.is_owner && (
                     <>
-                      <button type="button" className="ghost" disabled={busy} onClick={() => void handleShare(f)}>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={busy || !f.integrityOk}
+                        onClick={() => void handleShare(f)}
+                      >
                         Compartir
                       </button>
                       <button
