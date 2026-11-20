@@ -12,6 +12,12 @@ npm run dev    # http://localhost:5173  (proxy /api → :8000)
 
 Abre siempre con **`localhost`**, nunca `127.0.0.1` (WebAuthn liga la passkey al origen).
 
+## Pruebas
+```bash
+npm test       # Vitest: auditoría, navegación y operaciones de archivos
+npm run build  # TypeScript + build de producción
+```
+
 Producción / Docker (nginx sirve el build y reenvía `/api`):
 ```bash
 docker compose up --build
@@ -23,9 +29,10 @@ docker compose up --build
 |---|---|
 | `src/api.ts` | Cliente HTTP + token Bearer |
 | `src/auth/` | Passkeys (`@simplewebauthn/browser`) — TK-03.2 |
+| `src/auth/api.ts` | Construcción, firma y verificación del log de auditoría |
 | `src/crypto/` | Web Crypto + Argon2id (`hash-wasm`): encoding, firmas, claves, sobre |
 | `src/files/` | Manifiesto firmado, subida, listado/borrado, descarga, compartir |
-| `src/components/` | UI: auth, desbloqueo de claves, tabla de archivos |
+| `src/components/` | UI: auth, desbloqueo, tabla de archivos y bitácora |
 
 ## Contrato de la API
 Ver la sección **Contrato para el front** de `server/README.md` o http://localhost:8000/docs.

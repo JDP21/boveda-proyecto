@@ -5,6 +5,7 @@
 import { argon2id } from "hash-wasm";
 import { api } from "../api";
 import { enc, fromB64, toB64 } from "./encoding";
+import { logAudit } from "../auth/api";
 
 export type Keys = {
   encPrivate: CryptoKey;
@@ -74,7 +75,7 @@ export async function createKeys(phrase: string): Promise<Keys> {
     kdf_params: JSON.stringify(ARGON2),
   });
 
-  return {
+  const keys: Keys = {
     encPrivate: encPair.privateKey,
     encPublic: encPair.publicKey,
     sigPrivate: sigPair.privateKey,
@@ -82,6 +83,8 @@ export async function createKeys(phrase: string): Promise<Keys> {
     encSpki,
     sigSpki,
   };
+  await logAudit(keys, { action: "keys" });
+  return keys;
 }
 
 /** Sesiones siguientes: descarga el respaldo envuelto y lo abre con la frase. */
