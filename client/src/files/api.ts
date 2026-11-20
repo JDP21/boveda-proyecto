@@ -3,6 +3,7 @@ import { buildAuditEntry } from "../audit/api";
 import type { FilePackage } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
 
+
 export async function listFiles() {
   return api("GET", "/files");
 }

@@ -30,7 +30,7 @@ function saveTrusted(currentUser: string, map: Record<string, string>): void {
   localStorage.setItem(trustedStorageKey(currentUser), JSON.stringify(map));
 }
 
-/** Obtiene claves públicas de otro usuario y verifica su huella TOFU aislada por cuenta local. */
+/** Obtiene las claves públicas de otro usuario y exige verificación TOFU aislada por cuenta local. */
 export async function trustedKeys(
   currentUser: string,
   targetUsername: string,
@@ -64,18 +64,20 @@ export async function trustedKeys(
 async function importRsaPublic(spkiB64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "spki",
-    fromB64(spkiB64),
+    fromB64(spkiB64) as BufferSource,
     { name: "RSA-OAEP", hash: "SHA-256" },
     false,
     ["encrypt"],
   );
 }
 
+/** Lista los nombres de usuario que actualmente tienen acceso al archivo. */
 export async function listFileAccess(fileId: string): Promise<string[]> {
   const res = await api<{ users: string[] }>("GET", `/files/${fileId}/access`);
   return res.users;
 }
 
+/** Comparte un archivo existente envolviendo su DEK actual con la clave pública del destinatario. */
 export async function shareFile(keys: Keys, username: string, id: string, to: string) {
   const target = to.trim().toLowerCase();
   if (!target) throw new Error("Debes indicar un usuario destinatario.");
@@ -84,7 +86,11 @@ export async function shareFile(keys: Keys, username: string, id: string, to: st
   const pk = await trustedKeys(username, target);
   const { meta } = await fetchFilePackage(id);
   const rawDek = new Uint8Array(
-    await crypto.subtle.decrypt({ name: "RSA-OAEP" }, keys.encPrivate, fromB64(meta.wrapped_dek)),
+    await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      keys.encPrivate,
+      fromB64(meta.wrapped_dek) as BufferSource,
+    ),
   );
   const toPub = await importRsaPublic(pk.enc_public_key);
   const wrapped_dek = await wrapDek(rawDek, toPub);
@@ -103,6 +109,11 @@ export async function shareFile(keys: Keys, username: string, id: string, to: st
   });
 }
 
+/**
+ * Revoca el acceso de `userToRevoke` rotando la DEK:
+ * descarga y descifra el archivo, genera una nueva DEK (versión + 1),
+ * re-cifra el contenido y envuelve la nueva DEK únicamente para los usuarios autorizados restantes.
+ */
 export async function revokeAccess(
   keys: Keys,
   ownerUsername: string,
@@ -114,15 +125,20 @@ export async function revokeAccess(
     throw new Error("No puedes revocar tu propio acceso como propietario.");
   }
 
+  // 1. Consultar usuarios con acceso actual
   const users = await listFileAccess(fileId);
+
+  // 2. Filtrar para conservar únicamente a los autorizados
   const remainingUsers = users.filter((u) => u !== target);
   if (remainingUsers.length === users.length) {
     throw new Error(`El usuario ${target} no tiene acceso a este archivo.`);
   }
 
+  // 3. Descargar paquete actual y descifrarlo en memoria
   const pkg = await fetchFilePackage(fileId);
   const { plain, m } = await verifyAndDecrypt(keys, pkg, keys.sigSpki, ownerUsername);
 
+  // 4. Incrementar versión, generar nueva DEK, re-cifrar y firmar nuevo manifiesto
   const nextVersion = m.version + 1;
   const { blob, rawDek } = await encryptFile(fileId, nextVersion, plain);
   const { manifest, manifest_signature } = await signedManifest(
@@ -134,6 +150,7 @@ export async function revokeAccess(
     blob,
   );
 
+  // 5. Envolver la nueva DEK solo para los usuarios restantes
   const wrappedDeks: Array<{ username: string; wrapped_dek: string }> = [];
   for (const u of remainingUsers) {
     if (u === ownerUsername) {
@@ -151,6 +168,7 @@ export async function revokeAccess(
     }
   }
 
+  // 6. Construir FormData y entrada de auditoría encadenada
   const audit = await buildAuditEntry(keys, {
     action: "revoke",
     actor: ownerUsername,
@@ -167,5 +185,6 @@ export async function revokeAccess(
   form.append("audit", JSON.stringify(audit));
   form.append("blob", new Blob([blob.buffer as ArrayBuffer]), "blob.enc");
 
+  // 7. Enviar actualización atómica al servidor
   return api("PUT", `/files/${fileId}`, form);
 }

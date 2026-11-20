@@ -4,7 +4,11 @@ import {
   type ChainVerificationResult,
   fetchAuditLog,
   verifyFullAuditChain,
+<<<<<<< HEAD
 } from "../audit/api";
+=======
+} from "../auth/api";
+>>>>>>> main
 
 function parseEvent(raw: string): Record<string, unknown> {
   try {

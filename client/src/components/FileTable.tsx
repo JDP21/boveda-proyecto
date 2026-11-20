@@ -108,6 +108,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState("");
 
+  // Estado del panel "Gestionar accesos"
   const [managingFile, setManagingFile] = useState<VerifiedFileRow | null>(null);
   const [accessUsers, setAccessUsers] = useState<string[]>([]);
   const [loadingAccess, setLoadingAccess] = useState(false);
@@ -161,6 +162,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
       setError(`Descarga bloqueada para "${f.displayName}": ${f.integrityReason}`);
       return;
     }
+
     setBusy(true);
     setError("");
     setStatusMsg("Verificando firma, hash y descifrando…");
@@ -364,12 +366,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
                   </button>
                   {f.is_owner && (
                     <>
-                      <button
-                        type="button"
-                        className="ghost"
-                        disabled={busy || !f.integrityOk}
-                        onClick={() => void handleShare(f)}
-                      >
+                      <button type="button" className="ghost" disabled={busy} onClick={() => void handleShare(f)}>
                         Compartir
                       </button>
                       <button
