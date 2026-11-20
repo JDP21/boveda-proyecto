@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { buildAuditEntry } from "../auth/api";
+import { buildAuditEntry } from "../audit/api";
 import { fromB64 } from "../crypto/encoding";
 import { encryptFile, verifyAndDecrypt, wrapDek } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
@@ -14,26 +14,31 @@ export type PublicKeyBundle = {
   updated_at: string;
 };
 
-const TRUSTED_STORAGE_KEY = "boveda_trusted_fps";
+function trustedStorageKey(currentUser: string): string {
+  return `trusted_${currentUser.trim().toLowerCase()}`;
+}
 
-function loadTrusted(): Record<string, string> {
+function loadTrusted(currentUser: string): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(TRUSTED_STORAGE_KEY) ?? "{}") as Record<string, string>;
+    return JSON.parse(localStorage.getItem(trustedStorageKey(currentUser)) ?? "{}") as Record<string, string>;
   } catch {
     return {};
   }
 }
 
-function saveTrusted(map: Record<string, string>): void {
-  localStorage.setItem(TRUSTED_STORAGE_KEY, JSON.stringify(map));
+function saveTrusted(currentUser: string, map: Record<string, string>): void {
+  localStorage.setItem(trustedStorageKey(currentUser), JSON.stringify(map));
 }
 
-/** Obtiene las claves públicas de otro usuario y exige verificación TOFU de su huella. */
-export async function trustedKeys(username: string): Promise<PublicKeyBundle> {
-  const target = username.trim().toLowerCase();
+/** Obtiene las claves públicas de otro usuario y exige verificación TOFU aislada por cuenta local. */
+export async function trustedKeys(
+  currentUser: string,
+  targetUsername: string,
+): Promise<PublicKeyBundle> {
+  const target = targetUsername.trim().toLowerCase();
   const pk = await api<PublicKeyBundle>("GET", `/keys/${encodeURIComponent(target)}`);
   const fp = await fingerprint(pk.enc_public_key, pk.sig_public_key);
-  const trusted = loadTrusted();
+  const trusted = loadTrusted(currentUser);
 
   if (trusted[target]) {
     if (trusted[target] !== fp) {
@@ -52,14 +57,14 @@ export async function trustedKeys(username: string): Promise<PublicKeyBundle> {
   }
 
   trusted[target] = fp;
-  saveTrusted(trusted);
+  saveTrusted(currentUser, trusted);
   return pk;
 }
 
 async function importRsaPublic(spkiB64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "spki",
-    fromB64(spkiB64),
+    fromB64(spkiB64) as BufferSource,
     { name: "RSA-OAEP", hash: "SHA-256" },
     false,
     ["encrypt"],
@@ -78,13 +83,17 @@ export async function shareFile(keys: Keys, username: string, id: string, to: st
   if (!target) throw new Error("Debes indicar un usuario destinatario.");
   if (target === username) throw new Error("No puedes compartir un archivo contigo mismo.");
 
-  const pk = await trustedKeys(target);
+  const pk = await trustedKeys(username, target);
   const { meta } = await fetchFilePackage(id);
   const rawDek = new Uint8Array(
-    await crypto.subtle.decrypt({ name: "RSA-OAEP" }, keys.encPrivate, fromB64(meta.wrapped_dek)),
+    await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      keys.encPrivate,
+      fromB64(meta.wrapped_dek) as BufferSource,
+    ),
   );
   const toPub = await importRsaPublic(pk.enc_public_key);
-  const wrapped_dek = await wrapDek(rawDek.buffer as ArrayBuffer, toPub);
+  const wrapped_dek = await wrapDek(rawDek, toPub);
 
   const audit = await buildAuditEntry(keys, {
     action: "share",
@@ -127,7 +136,7 @@ export async function revokeAccess(
 
   // 3. Descargar paquete actual y descifrarlo en memoria
   const pkg = await fetchFilePackage(fileId);
-  const { plain, m } = await verifyAndDecrypt(keys, pkg, keys.sigSpki);
+  const { plain, m } = await verifyAndDecrypt(keys, pkg, keys.sigSpki, ownerUsername);
 
   // 4. Incrementar versión, generar nueva DEK, re-cifrar y firmar nuevo manifiesto
   const nextVersion = m.version + 1;
@@ -150,7 +159,7 @@ export async function revokeAccess(
         wrapped_dek: await wrapDek(rawDek, keys.encPublic),
       });
     } else {
-      const pk = await trustedKeys(u);
+      const pk = await trustedKeys(ownerUsername, u);
       const pub = await importRsaPublic(pk.enc_public_key);
       wrappedDeks.push({
         username: u,

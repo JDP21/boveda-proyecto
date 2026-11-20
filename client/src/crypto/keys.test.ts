@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import { logAudit } from "../auth/api";
+import { logAudit } from "../audit/api";
 import { createKeys } from "./keys";
 
 vi.mock("hash-wasm", () => ({
   argon2id: vi.fn(async () => new Uint8Array(32)),
 }));
 vi.mock("../api", () => ({ api: vi.fn() }));
-vi.mock("../auth/api", () => ({ logAudit: vi.fn() }));
+vi.mock("../audit/api", () => ({ logAudit: vi.fn() }));
 
 const mockedApi = vi.mocked(api);
 const mockedLogAudit = vi.mocked(logAudit);

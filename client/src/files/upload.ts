@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { buildAuditEntry } from "../auth/api";
+import { buildAuditEntry } from "../audit/api";
 import { encryptFile, wrapDek } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
 import { signedManifest } from "./manifest";
@@ -33,6 +33,6 @@ export async function uploadFile(keys: Keys, username: string, file: File) {
   form.append("manifest", manifest);
   form.append("manifest_signature", manifest_signature);
   form.append("audit", JSON.stringify(audit));
-  form.append("blob", new Blob([blob]), "blob.enc");
+  form.append("blob", new Blob([blob.buffer as ArrayBuffer]), "blob.enc");
   return api("POST", "/files", form);
 }

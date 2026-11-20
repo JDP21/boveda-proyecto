@@ -1,11 +1,12 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { getSeenVersion, type ManifestData, verifyManifestSignature } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
 import { deleteFile, listFiles } from "../files/api";
 import { onDownload } from "../files/download";
-import { listFileAccess, revokeAccess, shareFile } from "../files/share";
+import { listFileAccess, revokeAccess, shareFile, trustedKeys } from "../files/share";
 import { uploadFile } from "../files/upload";
 
-type FileRow = {
+type RawFileRow = {
   id: string;
   owner: string;
   is_owner: boolean;
@@ -15,14 +16,12 @@ type FileRow = {
   manifest_signature: string;
 };
 
-function extractName(manifestJson: string, fallbackId: string): string {
-  try {
-    const parsed = JSON.parse(manifestJson) as { name?: string };
-    return parsed.name || `${fallbackId.slice(0, 8)}…`;
-  } catch {
-    return `${fallbackId.slice(0, 8)}…`;
-  }
-}
+type VerifiedFileRow = RawFileRow & {
+  displayName: string;
+  displaySize: number;
+  integrityOk: boolean;
+  integrityReason: string;
+};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -30,15 +29,87 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+async function verifyRow(keys: Keys, currentUser: string, row: RawFileRow): Promise<VerifiedFileRow> {
+  let parsed: Partial<ManifestData> = {};
+  try {
+    parsed = JSON.parse(row.manifest) as Partial<ManifestData>;
+  } catch {
+    return {
+      ...row,
+      displayName: `${row.id.slice(0, 8)}… (manifiesto corrupto)`,
+      displaySize: row.size,
+      integrityOk: false,
+      integrityReason: "Manifiesto JSON inválido",
+    };
+  }
+
+  const fallbackName = parsed.name || `${row.id.slice(0, 8)}…`;
+  const displaySize = typeof parsed.size === "number" ? parsed.size : row.size;
+
+  try {
+    const ownerSigSpki = row.is_owner
+      ? keys.sigSpki
+      : (await trustedKeys(currentUser, row.owner)).sig_public_key;
+
+    const sigValid = await verifyManifestSignature(ownerSigSpki, row.manifest, row.manifest_signature);
+    if (!sigValid) {
+      return {
+        ...row,
+        displayName: fallbackName,
+        displaySize,
+        integrityOk: false,
+        integrityReason: "Firma ECDSA inválida (posible alteración del servidor)",
+      };
+    }
+
+    if (parsed.id !== row.id || parsed.version !== row.version) {
+      return {
+        ...row,
+        displayName: fallbackName,
+        displaySize,
+        integrityOk: false,
+        integrityReason: "ID o versión del manifiesto no coincide con la fila",
+      };
+    }
+
+    const lastSeen = getSeenVersion(currentUser, row.id);
+    if (row.version < lastSeen) {
+      return {
+        ...row,
+        displayName: fallbackName,
+        displaySize,
+        integrityOk: false,
+        integrityReason: `Rollback detectado (v${row.version} < v${lastSeen} vista)`,
+      };
+    }
+
+    return {
+      ...row,
+      displayName: fallbackName,
+      displaySize,
+      integrityOk: true,
+      integrityReason: "Firma ECDSA verificada",
+    };
+  } catch (err) {
+    return {
+      ...row,
+      displayName: fallbackName,
+      displaySize,
+      integrityOk: false,
+      integrityReason: err instanceof Error ? err.message : "No se pudo verificar la clave del propietario",
+    };
+  }
+}
+
 export function FileTable({ keys, username }: { keys: Keys; username: string }) {
-  const [files, setFiles] = useState<FileRow[]>([]);
+  const [files, setFiles] = useState<VerifiedFileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [error, setError] = useState("");
 
   // Estado del panel "Gestionar accesos"
-  const [managingFile, setManagingFile] = useState<FileRow | null>(null);
+  const [managingFile, setManagingFile] = useState<VerifiedFileRow | null>(null);
   const [accessUsers, setAccessUsers] = useState<string[]>([]);
   const [loadingAccess, setLoadingAccess] = useState(false);
 
@@ -46,14 +117,18 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     setLoading(true);
     setError("");
     try {
-      const data = await listFiles();
-      setFiles(data as FileRow[]);
+      const raw = (await listFiles()) as RawFileRow[];
+      const verified: VerifiedFileRow[] = [];
+      for (const item of raw) {
+        verified.push(await verifyRow(keys, username, item));
+      }
+      setFiles(verified);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [keys, username]);
 
   useEffect(() => {
     void refresh();
@@ -82,13 +157,19 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     }
   };
 
-  const handleDownload = async (f: FileRow) => {
+  const handleDownload = async (f: VerifiedFileRow) => {
+    if (!f.integrityOk) {
+      setError(`Descarga bloqueada para "${f.displayName}": ${f.integrityReason}`);
+      return;
+    }
+
     setBusy(true);
     setError("");
     setStatusMsg("Verificando firma, hash y descifrando…");
     try {
       await onDownload(keys, username, f.id);
-      setStatusMsg(`Descarga verificada: ${extractName(f.manifest, f.id)}`);
+      setStatusMsg(`Descarga verificada: ${f.displayName}`);
+      await refresh();
     } catch (err) {
       setStatusMsg("");
       setError(err instanceof Error ? err.message : String(err));
@@ -97,8 +178,8 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     }
   };
 
-  const handleShare = async (f: FileRow) => {
-    const to = window.prompt(`Usuario con quien compartir "${extractName(f.manifest, f.id)}":`);
+  const handleShare = async (f: VerifiedFileRow) => {
+    const to = window.prompt(`Usuario con quien compartir "${f.displayName}":`);
     if (!to) return;
 
     setBusy(true);
@@ -118,7 +199,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     }
   };
 
-  const openManageAccess = async (f: FileRow) => {
+  const openManageAccess = async (f: VerifiedFileRow) => {
     setManagingFile(f);
     setLoadingAccess(true);
     setError("");
@@ -157,9 +238,8 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     }
   };
 
-  const handleDelete = async (f: FileRow) => {
-    const name = extractName(f.manifest, f.id);
-    if (!window.confirm(`¿Eliminar permanentemente "${name}"?`)) return;
+  const handleDelete = async (f: VerifiedFileRow) => {
+    if (!window.confirm(`¿Eliminar permanentemente "${f.displayName}"?`)) return;
 
     setBusy(true);
     setError("");
@@ -167,7 +247,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     try {
       await deleteFile(keys, username, f.id);
       if (managingFile?.id === f.id) setManagingFile(null);
-      setStatusMsg(`Archivo "${name}" eliminado.`);
+      setStatusMsg(`Archivo "${f.displayName}" eliminado.`);
       await refresh();
     } catch (err) {
       setStatusMsg("");
@@ -177,6 +257,8 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
     }
   };
 
+  const tamperedCount = files.filter((f) => !f.integrityOk).length;
+
   return (
     <section>
       <form onSubmit={(e) => void handleUpload(e)} style={{ display: "flex", gap: "0.75rem", marginBottom: "1.25rem" }}>
@@ -185,6 +267,13 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
           Subir cifrado
         </button>
       </form>
+
+      {tamperedCount > 0 && (
+        <p role="alert" style={{ padding: "0.75rem", border: "1px solid #c62828", borderRadius: 6 }}>
+          <strong>ALERTA DE INTEGRIDAD (HU-10):</strong> {tamperedCount}{" "}
+          {tamperedCount === 1 ? "archivo tiene" : "archivos tienen"} firma o versión inválida. No confíes en sus metadatos.
+        </p>
+      )}
 
       {error && <p role="alert">{error}</p>}
       {statusMsg && !error && <p role="status" className="muted">{statusMsg}</p>}
@@ -200,7 +289,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
         >
           <div className="top" style={{ marginBottom: "0.75rem" }}>
             <strong>
-              Accesos de: {extractName(managingFile.manifest, managingFile.id)} (v{managingFile.version})
+              Accesos de: {managingFile.displayName} (v{managingFile.version})
             </strong>
             <button type="button" className="ghost" onClick={() => setManagingFile(null)} disabled={busy}>
               Cerrar
@@ -237,7 +326,7 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
       )}
 
       {loading ? (
-        <p className="muted">Cargando archivos…</p>
+        <p className="muted">Verificando firmas y cargando archivos…</p>
       ) : files.length === 0 ? (
         <p className="muted">No tienes archivos en la bóveda todavía.</p>
       ) : (
@@ -248,29 +337,47 @@ export function FileTable({ keys, username }: { keys: Keys; username: string }) 
               <th>Propietario</th>
               <th>Versión</th>
               <th>Tamaño</th>
+              <th>Integridad</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {files.map((f) => (
-              <tr key={f.id}>
-                <td title={f.id}>{extractName(f.manifest, f.id)}</td>
+              <tr key={f.id} style={!f.integrityOk ? { backgroundColor: "rgba(198, 40, 40, 0.15)" } : undefined}>
+                <td title={f.id}>{f.displayName}</td>
                 <td>{f.owner}</td>
                 <td>v{f.version}</td>
-                <td>{formatBytes(f.size)}</td>
+                <td>{formatBytes(f.displaySize)}</td>
+                <td title={f.integrityReason}>
+                  {f.integrityOk ? (
+                    <span style={{ color: "#66bb6a" }}>✔ Firma válida</span>
+                  ) : (
+                    <span style={{ color: "#ef5350", fontWeight: 600 }}>⚠ {f.integrityReason}</span>
+                  )}
+                </td>
                 <td style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                  <button type="button" className="ghost" disabled={busy} onClick={() => void handleDownload(f)}>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={busy || !f.integrityOk}
+                    onClick={() => void handleDownload(f)}
+                  >
                     Descargar
                   </button>
                   {f.is_owner && (
                     <>
-                      <button type="button" className="ghost" disabled={busy} onClick={() => void handleShare(f)}>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={busy || !f.integrityOk}
+                        onClick={() => void handleShare(f)}
+                      >
                         Compartir
                       </button>
                       <button
                         type="button"
                         className="ghost"
-                        disabled={busy}
+                        disabled={busy || !f.integrityOk}
                         onClick={() => void openManageAccess(f)}
                       >
                         Gestionar accesos

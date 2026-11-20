@@ -4,7 +4,7 @@ import {
   type ChainVerificationResult,
   fetchAuditLog,
   verifyFullAuditChain,
-} from "../auth/api";
+} from "../audit/api";
 
 function parseEvent(raw: string): Record<string, unknown> {
   try {

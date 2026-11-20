@@ -1,4 +1,4 @@
-import { logAudit } from "../auth/api";
+import { logAudit } from "../audit/api";
 import { verifyAndDecrypt } from "../crypto/envelope";
 import type { Keys } from "../crypto/keys";
 import { fetchFilePackage } from "./api";
@@ -9,8 +9,8 @@ export async function onDownload(keys: Keys, username: string, id: string) {
   const ownerSig =
     pkg.meta.owner === username
       ? keys.sigSpki
-      : (await trustedKeys(pkg.meta.owner)).sig_public_key;
-  const { plain, m } = await verifyAndDecrypt(keys, pkg, ownerSig);
+      : (await trustedKeys(username, pkg.meta.owner)).sig_public_key;
+  const { plain, m } = await verifyAndDecrypt(keys, pkg, ownerSig, username);
   await logAudit(keys, {
     action: "download",
     actor: username,
