@@ -1,9 +1,9 @@
 /**
- * Generación / desbloqueo de claves (HU-04).
- * Necesario para que el flujo del cliente funcione; Camilo puede refinar aquí.
+ * Generación / desbloqueo de claves (HU-04) + auditoría de inicialización (HU-07).
  */
 import { argon2id } from "hash-wasm";
 import { api } from "../api";
+import { logAudit } from "../audit/api";
 import { enc, fromB64, toB64 } from "./encoding";
 
 export type Keys = {
@@ -28,7 +28,7 @@ async function deriveKek(phrase: string, salt: Uint8Array): Promise<CryptoKey> {
     hashLength: 32,
     outputType: "binary",
   });
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return crypto.subtle.importKey("raw", raw as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 async function exportSpki(key: CryptoKey) {
@@ -39,7 +39,7 @@ async function exportPkcs8(key: CryptoKey) {
   return toB64(await crypto.subtle.exportKey("pkcs8", key));
 }
 
-/** Primera vez: genera RSA-OAEP 3072 + ECDSA P-256, envuelve privadas y las sube. */
+/** Primera vez: genera RSA-OAEP 3072 + ECDSA P-256, envuelve privadas, las sube y audita el evento. */
 export async function createKeys(phrase: string): Promise<Keys> {
   const encPair = await crypto.subtle.generateKey(
     { name: "RSA-OAEP", modulusLength: 3072, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -64,7 +64,11 @@ export async function createKeys(phrase: string): Promise<Keys> {
     }),
   );
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: WRAP_AD }, kek, privs);
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv as BufferSource, additionalData: WRAP_AD as BufferSource },
+    kek,
+    privs as BufferSource,
+  );
 
   await api("PUT", "/keys/me", {
     enc_public_key: encSpki,
@@ -74,7 +78,7 @@ export async function createKeys(phrase: string): Promise<Keys> {
     kdf_params: JSON.stringify(ARGON2),
   });
 
-  return {
+  const keys: Keys = {
     encPrivate: encPair.privateKey,
     encPublic: encPair.publicKey,
     sigPrivate: sigPair.privateKey,
@@ -82,6 +86,9 @@ export async function createKeys(phrase: string): Promise<Keys> {
     encSpki,
     sigSpki,
   };
+
+  await logAudit(keys, { action: "keys" });
+  return keys;
 }
 
 /** Sesiones siguientes: descarga el respaldo envuelto y lo abre con la frase. */
@@ -103,9 +110,9 @@ export async function unlockKeys(phrase: string): Promise<Keys> {
   const kek = await deriveKek(phrase, salt);
   const wrapped = JSON.parse(stored.wrapped_private_keys) as { iv: string; ct: string };
   const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromB64(wrapped.iv), additionalData: WRAP_AD },
+    { name: "AES-GCM", iv: fromB64(wrapped.iv) as BufferSource, additionalData: WRAP_AD as BufferSource },
     kek,
-    fromB64(wrapped.ct),
+    fromB64(wrapped.ct) as BufferSource,
   );
   const { enc: encPkcs8, sig: sigPkcs8 } = JSON.parse(new TextDecoder().decode(plain)) as {
     enc: string;
@@ -114,28 +121,28 @@ export async function unlockKeys(phrase: string): Promise<Keys> {
 
   const encPrivate = await crypto.subtle.importKey(
     "pkcs8",
-    fromB64(encPkcs8),
+    fromB64(encPkcs8) as BufferSource,
     { name: "RSA-OAEP", hash: "SHA-256" },
     false,
     ["decrypt"],
   );
   const encPublic = await crypto.subtle.importKey(
     "spki",
-    fromB64(stored.enc_public_key),
+    fromB64(stored.enc_public_key) as BufferSource,
     { name: "RSA-OAEP", hash: "SHA-256" },
     true,
     ["encrypt"],
   );
   const sigPrivate = await crypto.subtle.importKey(
     "pkcs8",
-    fromB64(sigPkcs8),
+    fromB64(sigPkcs8) as BufferSource,
     { name: "ECDSA", namedCurve: "P-256" },
     false,
     ["sign"],
   );
   const sigPublic = await crypto.subtle.importKey(
     "spki",
-    fromB64(stored.sig_public_key),
+    fromB64(stored.sig_public_key) as BufferSource,
     { name: "ECDSA", namedCurve: "P-256" },
     true,
     ["verify"],

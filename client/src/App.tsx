@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getToken } from "./api";
 import { logout, me } from "./auth/passkeys";
+import { AuditLog } from "./components/AuditLog";
 import { AuthForm } from "./components/AuthForm";
 import { FileTable } from "./components/FileTable";
 import { UnlockKeys } from "./components/UnlockKeys";
@@ -8,11 +9,13 @@ import type { Keys } from "./crypto/keys";
 import { fingerprint } from "./crypto/sign";
 
 type Session = { username: string; has_keys: boolean };
+type Tab = "files" | "audit";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [keys, setKeys] = useState<Keys | null>(null);
   const [fp, setFp] = useState("");
+  const [tab, setTab] = useState<Tab>("files");
   const [bootError, setBootError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -51,6 +54,7 @@ export default function App() {
     setKeys(null);
     setSession(null);
     setFp("");
+    setTab("files");
   };
 
   if (loading) {
@@ -93,11 +97,32 @@ export default function App() {
             Tu huella: {fp || "…"}
           </p>
         </div>
-        <button type="button" className="ghost" onClick={() => void onLogout()}>
-          Salir
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            type="button"
+            className={tab === "files" ? "" : "ghost"}
+            onClick={() => setTab("files")}
+          >
+            Archivos
+          </button>
+          <button
+            type="button"
+            className={tab === "audit" ? "" : "ghost"}
+            onClick={() => setTab("audit")}
+          >
+            Auditoría
+          </button>
+          <button type="button" className="ghost" onClick={() => void onLogout()}>
+            Salir
+          </button>
+        </div>
       </header>
-      <FileTable keys={keys} username={session.username} />
+
+      {tab === "files" ? (
+        <FileTable keys={keys} username={session.username} />
+      ) : (
+        <AuditLog />
+      )}
     </main>
   );
 }

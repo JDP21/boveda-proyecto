@@ -12,6 +12,13 @@ npm run dev    # http://localhost:5173  (proxy /api → :8000)
 
 Abre siempre con **`localhost`**, nunca `127.0.0.1` (WebAuthn liga la passkey al origen).
 
+## Pruebas y validación
+```bash
+npm test       # Vitest: integridad, acceso, revocación y descargas
+npm run lint
+npm run build
+```
+
 Producción / Docker (nginx sirve el build y reenvía `/api`):
 ```bash
 docker compose up --build
